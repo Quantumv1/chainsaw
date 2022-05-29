@@ -19,7 +19,9 @@ mappings:
       ParentCommandLine: "Event.EventData.ParentCommandLine"
       OriginalFileName: "Event.EventData.OriginalFileName"
     table_headers:
-      context_field: "Event.EventData.Image"
+      id: "Event.System.EventID"
+      computer_name: "Event.System.Computer"
+      image: "Event.EventData.Image"
       command_line: "Event.EventData.CommandLine"
 
   # Can cause noise, enabled as needed
@@ -47,7 +49,9 @@ mappings:
       Image: "Event.EventData.Image"
       ImageLoaded: "Event.EventData.ImageLoaded"
     table_headers:
-      context_field: "Event.EventData.Image"
+      id: "Event.System.EventID"
+      computer_name: "Event.System.Computer"
+      image: "Event.EventData.Image"
       image_loaded: "Event.EventData.ImageLoaded"
 
   11:
@@ -57,7 +61,9 @@ mappings:
       Image: "Event.EventData.Image"
       TargetFilename: "Event.EventData.TargetFilename"
     table_headers:
-      context_field: "Event.EventData.TargetFilename"
+      id: "Event.System.EventID"
+      computer_name: "Event.System.Computer"
+      target_filename: "Event.EventData.TargetFilename"
       image: "Event.EventData.Image"
 
   13:
@@ -68,7 +74,9 @@ mappings:
       TargetObject: "Event.EventData.TargetObject"
       Details: "Event.EventData.Details"
     table_headers:
-      context_field: "Event.EventData.Details"
+      id: "Event.System.EventID"
+      computer_name: "Event.System.Computer"
+      details: "Event.EventData.Details"
       target_object: "Event.EventData.TargetObject"
 
   7045:
@@ -78,7 +86,9 @@ mappings:
       CommandLine: "Event.EventData.ImagePath"
       ServiceName: "Event.EventData.ServiceName"
     table_headers:
-      context_field: "Event.EventData.ImagePath"
+      id: "Event.System.EventID"
+      computer_name: "Event.System.Computer"
+      image_path: "Event.EventData.ImagePath"
       service_name: "Event.EventData.ServiceName"
 
   4688:
@@ -89,7 +99,9 @@ mappings:
       UserName: "Event.EventData.SubjectUserName"
       Image: "Event.EventData.NewProcessName"
     table_headers:
-      context_field: "Event.EventData.CommandLine"
+      id: "Event.System.EventID"
+      computer_name: "Event.System.Computer"
+      command_line: "Event.EventData.CommandLine"
       process_name: "Event.EventData.NewProcessName"
 
   4104:
@@ -98,7 +110,9 @@ mappings:
     search_fields:
       ScriptBlockText: "Event.EventData.ScriptBlockText"
     table_headers:
-      context_field: "Event.EventData.ScriptBlockText"
+      id: "Event.System.EventID"
+      computer_name: "Event.System.Computer"
+      script_block_text: "Event.EventData.ScriptBlockText"
 
   4698:
     title: "Suspicious Scheduled Task Created"
@@ -106,5 +120,7 @@ mappings:
     search_fields:
       CommandLine: "Event.EventData.TaskContent"
     table_headers:
-      context_field: "Event.EventData.TaskContent"
+      id: "Event.System.EventID"
+      computer_name: "Event.System.Computer"
+      task_content: "Event.EventData.TaskContent"
       username: "Event.EventData.SubjectUserName"

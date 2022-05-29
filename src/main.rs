@@ -212,11 +212,6 @@ fn main() -> Result<()> {
             for path in &path {
                 files.extend(evtx::get_files(path)?);
             }
-            if evtx::has_large_logs(&files) {
-                cs_eyellowln!(
-                    "[!] Provided event logs are over 500MB in size. This will take a while to parse...",
-                );
-            }
             let mut detections = vec![];
             let pb = cli::init_progress_bar(files.len() as u64, "Hunting".to_string());
             for file in &files {
@@ -225,7 +220,11 @@ fn main() -> Result<()> {
                 pb.inc(1);
             }
             pb.finish();
-            cli::print_hunt_results(&detections);
+            if csv {
+            } else if json {
+            } else {
+                cli::print_detections(&detections, column_width.unwrap_or(40));
+            }
             cs_println!("[+] {} Detections found", detections.len());
         }
         Command::Lint { path, kind } => {
@@ -299,6 +298,9 @@ fn main() -> Result<()> {
                 cs_print!("[");
             }
             for evtx in &files {
+                let kind = infer::get_from_path(evtx);
+                println!("{:?}", kind);
+                std::process::exit(1);
                 // Parse EVTx files
                 let settings = ParserSettings::default()
                     .separate_json_attributes(true)

@@ -53,23 +53,25 @@ impl<'a> Document for Wrapper<'a> {
 }
 
 impl Huntable for SerializedEvtxRecord<Json> {
-    fn created(&self) -> crate::Result<DateTime<FixedOffset>> {
-        match DateTime::<FixedOffset>::parse_from_str(
+    fn created(&self) -> crate::Result<NaiveDateTime> {
+        match NaiveDateTime::parse_from_str(
             self.data["Event"]["System"]["TimeCreated_attributes"]["SystemTime"]
                 .as_str()
                 .unwrap(),
             "%Y-%m-%dT%H:%M:%S%.6fZ",
         ) {
             Ok(t) => Ok(t),
-            Err(_) => {
+            Err(e) => {
                 anyhow::bail!(
-                    "Failed to parse datetime from supplied events. This shouldn't happen..."
+                    "Failed to parse datetime from supplied events. This shouldn't happen... {} {}",
+                    self.data["Event"]["System"]["TimeCreated_attributes"]["SystemTime"],
+                    e
                 );
             }
         }
     }
 
-    fn hunt(&self, mapping: &Mapping, rules: &Vec<Rule>) -> Option<Detection> {
+    fn tags(&self, mapping: &Mapping, rules: &Vec<Rule>) -> Option<Vec<String>> {
         let event_id = if self.data["Event"]["System"]["EventID"]["#text"].is_null() {
             self.data["Event"]["System"]["EventID"].as_u64()
         } else {
@@ -94,89 +96,20 @@ impl Huntable for SerializedEvtxRecord<Json> {
         } else {
             return None;
         }
-        // FIXME: There is a mutation here for Stalker rules?
-        // ...
-        let mut hits = vec![];
+        let mut tags = vec![];
         for rule in rules {
             if mapping.exclusions.contains(&rule.tag) {
                 continue;
             }
             if rule.tau.matches(&Wrapper(&event.search_fields, &self.data)) {
-                hits.push(rule.clone());
+                tags.push(rule.tag.clone());
             }
         }
-        if hits.is_empty() {
-            return None;
-        }
-
-        // TODO: Bin this off...
-        let mut headers = vec![];
-        let mut values = vec![];
-        headers.push("system_time".to_string());
-        match self
-            .data
-            .find("Event.System.TimeCreated_attributes.SystemTime")
-        {
-            // The normal event time includes milliseconds which is un-necessary
-            Some(time) => {
-                values.push(time.to_string().unwrap());
-            }
-            None => values.push("<system time not found>".to_string()),
-        }
-        headers.push("id".to_string());
-        headers.push("detection_rules".to_string());
-        headers.push("computer_name".to_string());
-        match event.table_headers.get("context_field") {
-            Some(v) => headers.push(v.to_string()),
-            None => headers.push("context_field".to_string()),
-        };
-        values.push(event_id.to_string());
-        values.push(
-            hits.into_iter()
-                .map(|h| h.tag.to_owned())
-                .collect::<Vec<String>>()
-                .join("\n"),
-        );
-        values.push(self.data["Event"]["System"]["Computer"].to_string());
-        let command_line = match event.table_headers.get("context_field") {
-            Some(a) => match self.data.find(a) {
-                Some(v) => {
-                    if let Some(s) = v.to_string() {
-                        if s.is_empty() {
-                            "<empty>".to_string()
-                        } else {
-                            crate::cli::format_field_length(s, false, 40)
-                        }
-                    } else {
-                        "value is a complex type".to_owned()
-                    }
-                }
-                None => "context_field not found!".to_string(),
-            },
-            None => "context_field not set".to_string(),
-        };
-        values.push(command_line);
-        Some(Detection {
-            title: format!("(External Rule) - {}", event.title.clone()),
-            headers,
-            values,
-        })
+        Some(tags)
     }
 }
 
-pub fn has_large_logs(files: &[PathBuf]) -> bool {
-    for file in files {
-        let metadata = match metadata(file) {
-            Ok(a) => a,
-            Err(_) => return false,
-        };
-        if metadata.len() > 500000000 {
-            return true;
-        }
-    }
-    false
-}
-
+// TODO: Remove
 pub fn get_files(mut path: &Path) -> crate::Result<Vec<PathBuf>> {
     let mut evtx_files: Vec<PathBuf> = Vec::new();
     if path.display().to_string() == *"win_default" {
@@ -216,6 +149,7 @@ pub fn get_files(mut path: &Path) -> crate::Result<Vec<PathBuf>> {
     Ok(evtx_files)
 }
 
+// TODO: Remove
 pub fn parse_file(evtx_file: &Path) -> crate::Result<EvtxParser<File>> {
     let settings = ParserSettings::default()
         .separate_json_attributes(true)
@@ -224,6 +158,7 @@ pub fn parse_file(evtx_file: &Path) -> crate::Result<EvtxParser<File>> {
     Ok(parser)
 }
 
+// TODO: Remove
 pub fn search(
     mut parser: EvtxParser<File>,
     pattern: &Option<String>,
