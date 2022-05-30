@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate chainsaw;
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -13,7 +14,9 @@ use walkdir::WalkDir;
 // TODO: Remove
 use ::evtx::{EvtxParser, ParserSettings};
 
-use chainsaw::{cli, evtx, lint_rule, load_rule, set_writer, Format, Hunter, RuleKind, Writer};
+use chainsaw::{
+    cli, evtx, lint_rule, load_rule, set_writer, Detection, Format, Hunter, RuleKind, Writer,
+};
 
 #[derive(StructOpt)]
 #[structopt(
@@ -220,13 +223,47 @@ fn main() -> Result<()> {
                 pb.inc(1);
             }
             pb.finish();
+            detections.sort_by(|x, y| x.timestamp.cmp(&y.timestamp));
             if csv {
+                // TODO:
             } else if json {
-                cs_print_json!(&detections)?;
+                // TODO: Fixme...
+                let ruleset = "sigma".to_owned();
+                let rules: HashMap<_, _> = hunter.rules().iter().map(|r| (&r.tag, r)).collect();
+                cs_print_json!(&detections
+                    .iter()
+                    .map(|d| {
+                        let mut detections = Vec::with_capacity(d.hits.len());
+                        for hit in &d.hits {
+                            let rule = rules.get(&hit.tag).expect("could not get rule!");
+                            detections.push(Detection {
+                                authors: &rule.authors,
+                                group: &hit.group,
+                                kind: &d.kind,
+                                level: &rule.level,
+                                name: &hit.tag,
+                                ruleset: &ruleset,
+                                status: &rule.status,
+                                timestamp: &d.timestamp,
+                            })
+                        }
+                        detections
+                    })
+                    .flatten()
+                    .collect::<Vec<Detection>>())?;
             } else {
-                cli::print_detections(&detections, hunter.mappings(), column_width.unwrap_or(40));
+                cli::print_detections(
+                    &detections,
+                    hunter.mappings(),
+                    hunter.rules(),
+                    column_width.unwrap_or(40),
+                );
             }
-            cs_eprintln!("[+] {} Detections found", detections.len());
+            cs_eprintln!(
+                "[+] {} Detections found on {} documents",
+                detections.iter().map(|d| d.hits.len()).sum::<usize>(),
+                detections.len()
+            );
         }
         Command::Lint { path, kind } => {
             init_writer(None, false, false, false)?;

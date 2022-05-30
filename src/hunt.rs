@@ -3,41 +3,55 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, FixedOffset, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
 use crate::file::evtx;
 use crate::rule::{Kind as RuleKind, Rule};
 
-#[derive(Debug, PartialEq, Deserialize)]
-pub struct Events {
-    pub provider: String,
-    pub search_fields: HashMap<String, String>,
-    pub table_headers: HashMap<String, String>,
-    pub title: String,
+#[derive(Deserialize)]
+pub struct Group {
+    #[serde(default)]
+    pub default: Option<Vec<String>>,
+    pub fields: HashMap<String, String>,
+    pub filters: Vec<HashMap<String, Json>>,
+    pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct Mapping {
     #[serde(default)]
     pub exclusions: HashSet<String>,
-    pub kind: RuleKind,
-    #[serde(alias = "mappings")]
-    pub events: HashMap<u64, Events>,
+    pub groups: Vec<Group>,
+    pub kind: String,
+    pub name: String,
+    pub rules: RuleKind,
+}
+
+pub struct Hit {
+    pub tag: String,
+    pub group: Option<String>,
+}
+
+pub struct Detections {
+    pub hits: Vec<Hit>,
+    pub kind: Kind,
+    pub mapping: Option<String>,
+    pub timestamp: NaiveDateTime,
 }
 
 #[derive(Debug, Serialize)]
-pub struct Detection {
-    pub authors: Vec<String>,
-    pub group: String,
+pub struct Detection<'a> {
+    pub authors: &'a Vec<String>,
+    pub group: &'a Option<String>,
     #[serde(flatten)]
-    pub kind: Kind,
-    pub level: String,
-    pub name: String,
-    pub rule: String,
-    pub status: String,
-    pub timestamp: NaiveDateTime,
+    pub kind: &'a Kind,
+    pub level: &'a String,
+    pub name: &'a String,
+    pub ruleset: &'a String,
+    pub status: &'a String,
+    pub timestamp: &'a NaiveDateTime,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,7 +69,7 @@ pub enum Kind {
 
 pub trait Huntable {
     fn created(&self) -> crate::Result<NaiveDateTime>;
-    fn tags(&self, mapping: &Mapping, rules: &[Rule]) -> Option<Vec<String>>;
+    fn hits(&self, rules: &[Rule], mapping: Option<&Mapping>) -> Option<Vec<Hit>>;
 }
 
 #[derive(Default)]
@@ -88,8 +102,8 @@ impl HunterBuilder {
             None => vec![],
         };
         let rules = match self.rules {
-            Some(rules) => rules.into_iter().map(|r| (r.tag.clone(), r)).collect(),
-            None => HashMap::new(),
+            Some(rules) => rules,
+            None => vec![],
         };
 
         let skip_errors = self.skip_errors.unwrap_or_default();
@@ -134,7 +148,7 @@ impl HunterBuilder {
 
 pub struct HunterInner {
     mappings: Vec<Mapping>,
-    rules: HashMap<String, Rule>,
+    rules: Vec<Rule>,
 
     from: Option<DateTime<Utc>>,
     skip_errors: bool,
@@ -150,7 +164,7 @@ impl Hunter {
         HunterBuilder::new()
     }
 
-    pub fn hunt(&self, file: &Path) -> crate::Result<Vec<Detection>> {
+    pub fn hunt(&self, file: &Path) -> crate::Result<Vec<Detections>> {
         // TODO: We probably want to abstract this?
         let mut parser = match evtx::parse_file(file) {
             Ok(a) => a,
@@ -161,8 +175,6 @@ impl Hunter {
                 anyhow::bail!("{:?} - {}", file, e);
             }
         };
-        // TODO: Remove this...
-        let rules: Vec<_> = self.inner.rules.values().cloned().collect();
         let mut detections = vec![];
         for record in parser.records_json_value() {
             let r = match record {
@@ -171,53 +183,67 @@ impl Hunter {
                     continue;
                 }
             };
+            let timestamp = match r.created() {
+                Ok(timestamp) => timestamp,
+                Err(e) => {
+                    if self.inner.skip_errors {
+                        continue;
+                    }
+                    anyhow::bail!("could not get timestamp - {}", e);
+                }
+            };
             if self.inner.from.is_some() || self.inner.to.is_some() {
-                // TODO: Handle this...
-                let event_time = r.created().unwrap();
-                let time = DateTime::<Utc>::from_utc(event_time, Utc);
+                let localised = DateTime::<Utc>::from_utc(timestamp, Utc);
                 // Check if event is older than start date marker
                 if let Some(sd) = self.inner.from {
-                    if time <= sd {
+                    if localised <= sd {
                         continue;
                     }
                 }
                 // Check if event is newer than end date marker
                 if let Some(ed) = self.inner.to {
-                    if time >= ed {
+                    if localised >= ed {
                         continue;
                     }
                 }
             }
 
-            //
-            for mapping in &self.inner.mappings {
-                if let Some(tags) = r.tags(&mapping, &rules) {
-                    // FIXME: This is a temp way to get the group...
-                    let event_id = if r.data["Event"]["System"]["EventID"]["#text"].is_null() {
-                        r.data["Event"]["System"]["EventID"].as_u64()
-                    } else {
-                        r.data["Event"]["System"]["EventID"]["#text"].as_u64()
-                    };
-                    let event = mapping.events.get(&event_id.unwrap()).unwrap();
-
-                    // FIXME: This will bloat memory, we should store compressed then explode on write
-                    // out...
-                    for tag in tags {
-                        let rule = self.inner.rules.get(&tag).unwrap();
-                        detections.push(Detection {
-                            authors: rule.authors.as_ref().unwrap().clone(),
-                            group: event.title.clone(),
+            if self.inner.mappings.is_empty() {
+                if let Some(hits) = r.hits(&self.inner.rules, None) {
+                    if hits.is_empty() {
+                        continue;
+                    }
+                    detections.push(Detections {
+                        hits,
+                        kind: Kind::Individual {
+                            document: Document {
+                                kind: "evtx".to_owned(),
+                                data: r.data.clone(),
+                            },
+                        },
+                        mapping: None,
+                        timestamp,
+                    });
+                }
+            } else {
+                for mapping in &self.inner.mappings {
+                    if mapping.kind != "evtx" {
+                        continue;
+                    }
+                    if let Some(hits) = r.hits(&self.inner.rules, Some(&mapping)) {
+                        if hits.is_empty() {
+                            continue;
+                        }
+                        detections.push(Detections {
+                            hits,
                             kind: Kind::Individual {
                                 document: Document {
                                     kind: "evtx".to_owned(),
                                     data: r.data.clone(),
                                 },
                             },
-                            level: rule.level.as_ref().unwrap().clone(),
-                            name: rule.tag.clone(),
-                            rule: "sigma".to_owned(),
-                            status: rule.status.as_ref().unwrap().clone(),
-                            timestamp: r.created().unwrap(),
+                            mapping: Some(mapping.name.clone()),
+                            timestamp,
                         });
                     }
                 }
@@ -228,5 +254,9 @@ impl Hunter {
 
     pub fn mappings(&self) -> &Vec<Mapping> {
         &self.inner.mappings
+    }
+
+    pub fn rules(&self) -> &Vec<Rule> {
+        &self.inner.rules
     }
 }

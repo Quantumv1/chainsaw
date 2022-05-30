@@ -8,10 +8,10 @@ use evtx::{EvtxParser, ParserSettings, SerializedEvtxRecord};
 use is_elevated::is_elevated as user_is_elevated;
 use regex::Regex;
 use serde_json::Value as Json;
-use tau_engine::{Document, Value as Tau};
+use tau_engine::{AsValue, Document, Value as Tau};
 use walkdir::WalkDir;
 
-use crate::hunt::{Detection, Huntable, Mapping};
+use crate::hunt::{Hit, Huntable, Mapping};
 use crate::rule::Rule;
 
 enum Provider {
@@ -61,51 +61,125 @@ impl Huntable for SerializedEvtxRecord<Json> {
             "%Y-%m-%dT%H:%M:%S%.6fZ",
         ) {
             Ok(t) => Ok(t),
-            Err(e) => {
-                anyhow::bail!(
-                    "Failed to parse datetime from supplied events. This shouldn't happen... {} {}",
-                    self.data["Event"]["System"]["TimeCreated_attributes"]["SystemTime"],
-                    e
-                );
-            }
+            Err(_) => anyhow::bail!(
+                "Failed to parse datetime from supplied events. This shouldn't happen..."
+            ),
         }
     }
 
-    fn tags(&self, mapping: &Mapping, rules: &[Rule]) -> Option<Vec<String>> {
-        let event_id = if self.data["Event"]["System"]["EventID"]["#text"].is_null() {
-            self.data["Event"]["System"]["EventID"].as_u64()
-        } else {
-            self.data["Event"]["System"]["EventID"]["#text"].as_u64()
-        };
-        let event_id = match event_id {
-            Some(e) => e,
-            None => return None,
-        };
-        let event = match mapping.events.get(&event_id) {
-            Some(e) => e,
-            None => return None,
-        };
-        if let Some(provider) = self.data.find("Event.System.Provider_attributes.Name") {
-            if let Some(s) = provider.as_str() {
-                if s != event.provider {
-                    return None;
+    fn hits(&self, rules: &[Rule], mapping: Option<&Mapping>) -> Option<Vec<Hit>> {
+        match mapping {
+            Some(mapping) => {
+                // Event logs are a PITA, they can be inconsistent in their designs...
+                let mut hits = vec![];
+                for group in &mapping.groups {
+                    let mut matched = false;
+                    for filter in &group.filters {
+                        for (k, v) in filter {
+                            // TODO: Don't filter like this, its slow AF...
+                            match k.as_str() {
+                                "Event.System.EventID" => {
+                                    if let Some(value) = self.data.find(k) {
+                                        match (value.to_string(), v.as_value().to_string()) {
+                                            (Some(x), Some(y)) => {
+                                                matched = x == y;
+                                            }
+                                            (_, _) => {
+                                                matched = false;
+                                            }
+                                        }
+                                        if matched == false {
+                                            break;
+                                        }
+                                        continue;
+                                    } else if let Some(value) =
+                                        self.data.find("Event.System.EventID.#text")
+                                    {
+                                        match (value.to_string(), v.as_value().to_string()) {
+                                            (Some(x), Some(y)) => {
+                                                matched = x == y;
+                                            }
+                                            (_, _) => {
+                                                matched = false;
+                                            }
+                                        }
+                                        if matched == false {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                }
+                                "Event.System.Provider" => {
+                                    if let Some(value) =
+                                        self.data.find("Event.System.Provider_attributes.Name")
+                                    {
+                                        match (value.to_string(), v.as_value().to_string()) {
+                                            (Some(x), Some(y)) => {
+                                                matched = x == y;
+                                            }
+                                            (_, _) => {
+                                                matched = false;
+                                            }
+                                        }
+                                        if matched == false {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                }
+                                _ => {
+                                    if let Some(value) = self.data.find(k) {
+                                        match (value.to_string(), v.as_value().to_string()) {
+                                            (Some(x), Some(y)) => {
+                                                matched = x == y;
+                                            }
+                                            (_, _) => {
+                                                matched = false;
+                                            }
+                                        }
+                                        if matched == false {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+                            matched = false;
+                            break;
+                        }
+                        if matched {
+                            break;
+                        }
+                    }
+                    if matched {
+                        for rule in rules {
+                            if mapping.exclusions.contains(&rule.tag) {
+                                continue;
+                            }
+                            if rule.tau.matches(&Wrapper(&group.fields, &self.data)) {
+                                hits.push(Hit {
+                                    tag: rule.tag.clone(),
+                                    group: Some(group.name.clone()),
+                                });
+                            }
+                        }
+                    }
                 }
-            } else {
-                return None;
+                Some(hits)
             }
-        } else {
-            return None;
+            None => {
+                let mut hits = vec![];
+                for rule in rules {
+                    if rule.tau.matches(&self.data) {
+                        hits.push(Hit {
+                            tag: rule.tag.clone(),
+                            group: None,
+                        });
+                    }
+                }
+                Some(hits)
+            }
         }
-        let mut tags = vec![];
-        for rule in rules {
-            if mapping.exclusions.contains(&rule.tag) {
-                continue;
-            }
-            if rule.tau.matches(&Wrapper(&event.search_fields, &self.data)) {
-                tags.push(rule.tag.clone());
-            }
-        }
-        Some(tags)
     }
 }
 

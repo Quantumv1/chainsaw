@@ -4,7 +4,8 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use prettytable::{cell, format, Row, Table};
 use tau_engine::Document;
 
-use crate::hunt::{Detection, Events, Kind, Mapping};
+use crate::hunt::{Detections, Kind, Mapping};
+use crate::rule::Rule;
 
 #[cfg(not(windows))]
 pub const RULE_PREFIX: &str = "‣ ";
@@ -63,7 +64,12 @@ pub fn format_field_length(data: &str, full_output: bool, length: u32) -> String
     data
 }
 
-pub fn print_detections(detections: &[Detection], mappings: &[Mapping], column_width: u32) {
+pub fn print_detections(
+    detections: &[Detections],
+    mappings: &[Mapping],
+    rules: &[Rule],
+    column_width: u32,
+) {
     let format = format::FormatBuilder::new()
         .column_separator('│')
         .borders('│')
@@ -82,49 +88,99 @@ pub fn print_detections(detections: &[Detection], mappings: &[Mapping], column_w
         .padding(1, 1)
         .build();
 
-    // TODO: Remove
-    let mappings: HashMap<&String, &Events> = mappings[0]
-        .events
+    let mappings: HashMap<_, HashMap<_, _>> = mappings
         .iter()
-        .map(|(_, e)| (&e.title, e))
+        .map(|m| (&m.name, m.groups.iter().map(|g| (&g.name, g)).collect()))
         .collect();
+    let rules: HashMap<_, _> = rules.iter().map(|r| (&r.tag, r)).collect();
 
-    let mut tables: HashMap<&String, Vec<&Detection>> = HashMap::new();
+    let empty = "".to_owned();
+    let mut tables: HashMap<&String, (Row, Vec<Row>)> = HashMap::new();
     for detection in detections {
-        let hits = tables.entry(&detection.group).or_insert(vec![]);
-        (*hits).push(detection);
-    }
-
-    for (group, mut rows) in tables {
-        let mapping = mappings.get(group).unwrap();
-        let mut headers = vec![cell!("timestamp").style_spec("c")];
-        let mut order = vec![];
-        for c in &mapping.table_headers {
-            let cell = cell!(c.0).style_spec("c");
-            headers.push(cell);
-            order.push(c.1);
-        }
-        let mut table = Table::new();
-        table.set_format(format);
-        table.add_row(Row::new(headers));
-
-        rows.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-        for row in rows {
-            let mut cells = vec![cell!(row.timestamp)];
-            for key in &order {
-                if let Kind::Individual { document } = &row.kind {
-                    if let Some(value) =
-                        document.data.find(key.as_str()).and_then(|v| v.to_string())
-                    {
-                        cells.push(cell!(format_field_length(&value, false, column_width)));
+        let document = match &detection.kind {
+            Kind::Individual { document } => document,
+            _ => continue,
+        };
+        if let Some(mapping) = &detection.mapping {
+            if let Some(groups) = mappings.get(mapping) {
+                for hit in &detection.hits {
+                    let group = groups
+                        .get(&hit.group.as_ref().expect("group is not set!"))
+                        .expect("could not get group!");
+                    let mut header = vec![
+                        cell!("timestamp").style_spec("c"),
+                        cell!("detections").style_spec("c"),
+                    ];
+                    let mut cells = vec![
+                        cell!(detection.timestamp),
+                        cell!(detection
+                            .hits
+                            .iter()
+                            .map(|h| h.tag.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n")),
+                    ];
+                    if let Some(default) = group.default.as_ref() {
+                        for field in default {
+                            header.push(cell!(field).style_spec("c"));
+                            if let Some(value) = group
+                                .fields
+                                .get(field)
+                                .and_then(|k| document.data.find(k))
+                                .and_then(|v| v.to_string())
+                            {
+                                cells.push(cell!(format_field_length(&value, false, column_width)));
+                            } else {
+                                cells.push(cell!(""));
+                            }
+                        }
                     } else {
-                        cells.push(cell!(""));
+                        header.push(cell!("data").style_spec("c"));
+                        let json = serde_json::to_string(&document.data)
+                            .expect("could not serialise document");
+                        cells.push(cell!(format_field_length(&json, false, column_width)));
                     }
+                    let table = tables
+                        .entry(&group.name)
+                        .or_insert((Row::new(header), vec![]));
+                    (*table).1.push(Row::new(cells));
                 }
             }
-            table.add_row(Row::new(cells));
+        } else {
+            let mut cells = vec![
+                cell!(detection.timestamp),
+                cell!(detection
+                    .hits
+                    .iter()
+                    .map(|h| h.tag.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")),
+            ];
+            let json = serde_json::to_string(&document.data).expect("could not serialise document");
+            cells.push(cell!(format_field_length(&json, false, column_width)));
+            let rows = tables.entry(&empty).or_insert((
+                Row::new(vec![
+                    cell!("timestamp").style_spec("c"),
+                    cell!("detections").style_spec("c"),
+                    cell!("data").style_spec("c"),
+                ]),
+                vec![],
+            ));
+            (*rows).1.push(Row::new(cells));
         }
-        cs_greenln!("\n[+] Detection: {}", group);
-        cs_print_table!(table);
+    }
+
+    let mut keys = tables.keys().cloned().collect::<Vec<_>>();
+    keys.sort();
+    for key in keys {
+        let table = tables.remove(key).expect("could not get table!");
+        let mut t = Table::new();
+        t.set_format(format);
+        t.add_row(table.0);
+        for row in table.1 {
+            t.add_row(row);
+        }
+        cs_greenln!("\n[+] Group: {}", key);
+        cs_print_table!(t);
     }
 }

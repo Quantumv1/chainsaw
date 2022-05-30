@@ -4,7 +4,7 @@ extern crate anyhow;
 pub(crate) use anyhow::Result;
 
 pub use file::evtx;
-pub use hunt::{Hunter, HunterBuilder};
+pub use hunt::{Detection, Hunter, HunterBuilder};
 pub use rule::{lint_rule, load_rule, Kind as RuleKind};
 pub use write::{set_writer, Format, Writer, WRITER};
 

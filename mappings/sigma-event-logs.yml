@@ -1,126 +1,157 @@
-# Supported values are Stalker and Sigma
-kind: sigma
-# Exclude noisy rules, add the "title" of the Sigma rule here to exclude (or just delete the rule...)
-exclusions:
-  - "Wuauclt Network Connection"
-  - "Exports Registry Key To an Alternate Data Stream"
-  - "NetNTLM Downgrade Attack"
-  - "Non Interactive PowerShell"
-  - "Defense evasion via process reimaging"
-# EventID and SystemTime are automatically added to the mapping schema and show in the table output
-mappings:
-  1:
-    title: "Suspicious Process Creation"
-    provider: "Microsoft-Windows-Sysmon"
-    search_fields:
-      Image: "Event.EventData.Image"
-      CommandLine: "Event.EventData.CommandLine"
-      ParentImage: "Event.EventData.ParentImage"
-      ParentCommandLine: "Event.EventData.ParentCommandLine"
-      OriginalFileName: "Event.EventData.OriginalFileName"
-    table_headers:
-      id: "Event.System.EventID"
-      computer_name: "Event.System.Computer"
-      image: "Event.EventData.Image"
-      command_line: "Event.EventData.CommandLine"
+---
+name: Chainsaw's Sigma mappings for Event Logs
+kind: evtx
+rules: sigma
 
-  # Can cause noise, enabled as needed
-  #  3:
-  #    title: "Suspicious Network Connection"
-  #    provider: "Microsoft-Windows-Sysmon"
-  #    search_fields:
-  #      Image: "Event.EventData.Image"
-  #      DestinationIp: "Event.EventData.DestinationIp"
-  #      DestinationHostname: "Event.EventData.DestinationHostname"
-  #      DestinationPort: "Event.EventData.DestinationPort"
-  #      DestinationIsIpv6: "Event.EventData.DestinationIsIpv6"
-  #      User: "Event.EventData.User"
-  #      Initiated: "Event.EventData.Initiated"
-  #      SourcePort: "Event.EventData.SourcePort"
-  #    table_headers:
-  #      context_field: "Event.EventData.Image"
-  #      destination_ip: "Event.EventData.DestinationIp"
-  #      destination_port: "Event.EventData.DestinationPort"
+ignore:
+  - Defense evasion via process reimaging
+  - Exports Registry Key To an Alternate Data Stream
+  - NetNTLM Downgrade Attack
+  - Non Interactive PowerShell
+  - Wuauclt Network Connection
 
-  7:
-    title: "Suspicious Image Load"
-    provider: "Microsoft-Windows-Sysmon"
-    search_fields:
-      Image: "Event.EventData.Image"
-      ImageLoaded: "Event.EventData.ImageLoaded"
-    table_headers:
-      id: "Event.System.EventID"
-      computer_name: "Event.System.Computer"
-      image: "Event.EventData.Image"
-      image_loaded: "Event.EventData.ImageLoaded"
+groups:
+  - name: Suspicious Process Creation
+    filters:
+      - Event.System.Provider: Microsoft-Windows-Sysmon
+        Event.System.EventID: 1
+    fields:
+      CommandLine: Event.EventData.CommandLine
+      Computer: Event.System.Computer
+      EventID: Event.System.EventID
+      Image: Event.EventData.Image
+      OriginalFileName: Event.EventData.OriginalFileName
+      ParentCommandLine: Event.EventData.ParentCommandLine
+      ParentImage: Event.EventData.ParentImage
+    default:
+      - EventID
+      - Computer
+      - Image
+      - CommandLine
 
-  11:
-    title: "Suspicious File Creation"
-    provider: "Microsoft-Windows-Sysmon"
-    search_fields:
-      Image: "Event.EventData.Image"
-      TargetFilename: "Event.EventData.TargetFilename"
-    table_headers:
-      id: "Event.System.EventID"
-      computer_name: "Event.System.Computer"
-      target_filename: "Event.EventData.TargetFilename"
-      image: "Event.EventData.Image"
+  - name: Suspicious Network Connection
+    filters:
+      - Event.System.Provider: Microsoft-Windows-Sysmon
+        Event.System.EventID: 3
+    fields:
+      Computer: Event.System.Computer
+      DestinationIp: Event.EventData.DestinationIp
+      DestinationHostname: Event.EventData.DestinationHostname
+      DestinationPort: Event.EventData.DestinationPort
+      DestinationIsIpv6: Event.EventData.DestinationIsIpv6
+      EventID: Event.System.EventID
+      Image: Event.EventData.Image
+      Initiated: Event.EventData.Initiated
+      SourcePort: Event.EventData.SourcePort
+      User: Event.EventData.User
+    default:
+      - EventID
+      - Computer
+      - Image
+      - DestinationIp
+      - DestinationPort
 
-  13:
-    title: "Suspicious Registry Event"
-    provider: "Microsoft-Windows-Sysmon"
-    search_fields:
-      Image: "Event.EventData.Image"
-      TargetObject: "Event.EventData.TargetObject"
-      Details: "Event.EventData.Details"
-    table_headers:
-      id: "Event.System.EventID"
-      computer_name: "Event.System.Computer"
-      details: "Event.EventData.Details"
-      target_object: "Event.EventData.TargetObject"
+  - name: Suspicious Image Load
+    filters:
+      - Event.System.Provider: Microsoft-Windows-Sysmon
+        Event.System.EventID: 7
+    fields:
+      Computer: Event.System.Computer
+      EventID: Event.System.EventID
+      Image: Event.EventData.Image
+      ImageLoaded: Event.EventData.ImageLoaded
+    default:
+      - EventID
+      - Computer
+      - Image
+      - ImageLoaded
 
-  7045:
-    title: "Suspicious Service Installed"
-    provider: "Service Control Manager"
-    search_fields:
-      CommandLine: "Event.EventData.ImagePath"
-      ServiceName: "Event.EventData.ServiceName"
-    table_headers:
-      id: "Event.System.EventID"
-      computer_name: "Event.System.Computer"
-      image_path: "Event.EventData.ImagePath"
-      service_name: "Event.EventData.ServiceName"
+  - name: Suspicious File Creation
+    filters:
+      - Event.System.Provider: Microsoft-Windows-Sysmon
+        Event.System.EventID: 11
+    fields:
+      Computer: Event.System.Computer
+      EventID: Event.System.EventID
+      Image: Event.EventData.Image
+      TargetFilename: Event.EventData.TargetFilename
+    default:
+      - EventID
+      - Computer
+      - TargetFilename
+      - Image
 
-  4688:
-    title: "Suspicious Command Line"
-    provider: "Microsoft-Windows-Security-Auditing"
-    search_fields:
-      CommandLine: "Event.EventData.CommandLine"
-      UserName: "Event.EventData.SubjectUserName"
-      Image: "Event.EventData.NewProcessName"
-    table_headers:
-      id: "Event.System.EventID"
-      computer_name: "Event.System.Computer"
-      command_line: "Event.EventData.CommandLine"
-      process_name: "Event.EventData.NewProcessName"
+  - name: Suspicious Registry Event
+    filters:
+      - Event.System.Provider: Microsoft-Windows-Sysmon
+        Event.System.EventID: 13
+    fields:
+      Computer: Event.System.Computer
+      Details: Event.EventData.Details
+      EventID: Event.System.EventID
+      Image: Event.EventData.Image
+      TargetObject: Event.EventData.TargetObject
+    default:
+      - EventID
+      - Computer
+      - Details
+      - TargetObject
 
-  4104:
-    title: "Suspicious Powershell ScriptBlock"
-    provider: "Microsoft-Windows-PowerShell"
-    search_fields:
-      ScriptBlockText: "Event.EventData.ScriptBlockText"
-    table_headers:
-      id: "Event.System.EventID"
-      computer_name: "Event.System.Computer"
-      script_block_text: "Event.EventData.ScriptBlockText"
+  - name: Suspicious Service Installed
+    filters:
+      - Event.System.Provider: Service Control Manager
+        Event.System.EventID: 7045
+    fields:
+      CommandLine: Event.EventData.ImagePath
+      Computer: Event.System.Computer
+      EventID: Event.System.EventID
+      ServiceName: Event.EventData.ServiceName
+    default:
+      - EventID
+      - Computer
+      - CommandLine
+      - ServiceName
 
-  4698:
-    title: "Suspicious Scheduled Task Created"
-    provider: "Microsoft-Windows-Security-Auditing"
-    search_fields:
-      CommandLine: "Event.EventData.TaskContent"
-    table_headers:
-      id: "Event.System.EventID"
-      computer_name: "Event.System.Computer"
-      task_content: "Event.EventData.TaskContent"
-      username: "Event.EventData.SubjectUserName"
+  - name: Suspicious Command Line
+    filters:
+      - Event.System.Provider: Microsoft-Windows-Security-Auditing
+        Event.System.EventID: 4688
+    fields:
+      CommandLine: Event.EventData.CommandLine
+      Computer: Event.System.Computer
+      EventID: Event.System.EventID
+      Image: Event.EventData.NewProcessName
+      UserName: Event.EventData.SubjectUserName
+    default:
+      - EventID
+      - Computer
+      - CommandLine
+      - Image
+
+  - name: Suspicious Powershell ScriptBlock
+    filters:
+      - Event.System.Provider: Microsoft-Windows-PowerShell
+        Event.System.EventID: 4104
+    fields:
+      Computer: Event.System.Computer
+      EventID: Event.System.EventID
+      ScriptBlockText: Event.EventData.ScriptBlockText
+    default:
+      - EventID
+      - Computer
+      - ScriptBlockText
+
+  - name: Suspicious Scheduled Task Created
+    filters:
+      - Event.System.Provider: Microsoft-Windows-Security-Auditing
+        Event.System.EventID: 4698
+    fields:
+      CommandLine: Event.EventData.TaskContent
+      Computer: Event.System.Computer
+      EventID: Event.System.EventID
+      UserName: Event.EventData.SubjectUserName
+    default:
+      - EventID
+      - Computer
+      - CommandLine
+      - UserName

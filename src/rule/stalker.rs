@@ -20,10 +20,10 @@ impl From<Stalker> for Rule {
     fn from(stalker: Stalker) -> Self {
         Self {
             tag: stalker.tag,
-            level: Some(stalker.level),
-            status: Some(stalker.status),
+            level: stalker.level,
+            status: stalker.status,
             tau: stalker.tau,
-            authors: Some(stalker.authors),
+            authors: stalker.authors,
         }
     }
 }
