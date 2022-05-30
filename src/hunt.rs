@@ -34,9 +34,9 @@ pub struct Detection {
     #[serde(flatten)]
     pub kind: Kind,
     pub level: String,
+    pub name: String,
     pub rule: String,
     pub status: String,
-    pub tag: String,
     pub timestamp: NaiveDateTime,
 }
 
@@ -214,9 +214,9 @@ impl Hunter {
                                 },
                             },
                             level: rule.level.as_ref().unwrap().clone(),
+                            name: rule.tag.clone(),
                             rule: "sigma".to_owned(),
                             status: rule.status.as_ref().unwrap().clone(),
-                            tag: rule.tag.clone(),
                             timestamp: r.created().unwrap(),
                         });
                     }
