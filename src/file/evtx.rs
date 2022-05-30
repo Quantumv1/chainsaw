@@ -71,7 +71,7 @@ impl Huntable for SerializedEvtxRecord<Json> {
         }
     }
 
-    fn tags(&self, mapping: &Mapping, rules: &Vec<Rule>) -> Option<Vec<String>> {
+    fn tags(&self, mapping: &Mapping, rules: &[Rule]) -> Option<Vec<String>> {
         let event_id = if self.data["Event"]["System"]["EventID"]["#text"].is_null() {
             self.data["Event"]["System"]["EventID"].as_u64()
         } else {

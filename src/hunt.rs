@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
 use crate::file::evtx;
@@ -27,17 +27,35 @@ pub struct Mapping {
     pub events: HashMap<u64, Events>,
 }
 
+#[derive(Debug, Serialize)]
 pub struct Detection {
-    pub document: Json,
+    pub authors: Vec<String>,
     pub group: String,
-    pub source: String,
-    pub tags: Vec<String>,
+    #[serde(flatten)]
+    pub kind: Kind,
+    pub level: String,
+    pub rule: String,
+    pub status: String,
+    pub tag: String,
     pub timestamp: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Document {
+    pub kind: String,
+    pub data: Json,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Kind {
+    Aggregate { documents: Vec<Document> },
+    Individual { document: Document },
 }
 
 pub trait Huntable {
     fn created(&self) -> crate::Result<NaiveDateTime>;
-    fn tags(&self, mapping: &Mapping, rules: &Vec<Rule>) -> Option<Vec<String>>;
+    fn tags(&self, mapping: &Mapping, rules: &[Rule]) -> Option<Vec<String>>;
 }
 
 #[derive(Default)]
@@ -70,8 +88,8 @@ impl HunterBuilder {
             None => vec![],
         };
         let rules = match self.rules {
-            Some(rules) => rules,
-            None => vec![],
+            Some(rules) => rules.into_iter().map(|r| (r.tag.clone(), r)).collect(),
+            None => HashMap::new(),
         };
 
         let skip_errors = self.skip_errors.unwrap_or_default();
@@ -116,7 +134,7 @@ impl HunterBuilder {
 
 pub struct HunterInner {
     mappings: Vec<Mapping>,
-    rules: Vec<Rule>,
+    rules: HashMap<String, Rule>,
 
     from: Option<DateTime<Utc>>,
     skip_errors: bool,
@@ -143,6 +161,8 @@ impl Hunter {
                 anyhow::bail!("{:?} - {}", file, e);
             }
         };
+        // TODO: Remove this...
+        let rules: Vec<_> = self.inner.rules.values().cloned().collect();
         let mut detections = vec![];
         for record in parser.records_json_value() {
             let r = match record {
@@ -171,11 +191,42 @@ impl Hunter {
 
             //
             for mapping in &self.inner.mappings {
-                if let Some(detection) = r.tags(&mapping, &self.inner.rules) {
-                    detections.push(detection);
+                if let Some(tags) = r.tags(&mapping, &rules) {
+                    // FIXME: This is a temp way to get the group...
+                    let event_id = if r.data["Event"]["System"]["EventID"]["#text"].is_null() {
+                        r.data["Event"]["System"]["EventID"].as_u64()
+                    } else {
+                        r.data["Event"]["System"]["EventID"]["#text"].as_u64()
+                    };
+                    let event = mapping.events.get(&event_id.unwrap()).unwrap();
+
+                    // FIXME: This will bloat memory, we should store compressed then explode on write
+                    // out...
+                    for tag in tags {
+                        let rule = self.inner.rules.get(&tag).unwrap();
+                        detections.push(Detection {
+                            authors: rule.authors.as_ref().unwrap().clone(),
+                            group: event.title.clone(),
+                            kind: Kind::Individual {
+                                document: Document {
+                                    kind: "evtx".to_owned(),
+                                    data: r.data.clone(),
+                                },
+                            },
+                            level: rule.level.as_ref().unwrap().clone(),
+                            rule: "sigma".to_owned(),
+                            status: rule.status.as_ref().unwrap().clone(),
+                            tag: rule.tag.clone(),
+                            timestamp: r.created().unwrap(),
+                        });
+                    }
                 }
             }
         }
         Ok(detections)
+    }
+
+    pub fn mappings(&self) -> &Vec<Mapping> {
+        &self.inner.mappings
     }
 }

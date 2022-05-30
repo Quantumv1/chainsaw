@@ -222,10 +222,11 @@ fn main() -> Result<()> {
             pb.finish();
             if csv {
             } else if json {
+                cs_print_json!(&detections)?;
             } else {
-                cli::print_detections(&detections, column_width.unwrap_or(40));
+                cli::print_detections(&detections, hunter.mappings(), column_width.unwrap_or(40));
             }
-            cs_println!("[+] {} Detections found", detections.len());
+            cs_eprintln!("[+] {} Detections found", detections.len());
         }
         Command::Lint { path, kind } => {
             init_writer(None, false, false, false)?;

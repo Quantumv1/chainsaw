@@ -110,6 +110,7 @@ macro_rules! cs_eprintln {
     })
 }
 
+#[macro_export]
 macro_rules! cs_print_json {
     ($value:expr) => {{
         use std::io::Write;

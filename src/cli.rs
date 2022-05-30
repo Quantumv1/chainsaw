@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use prettytable::{cell, format, Row, Table};
+use tau_engine::Document;
 
-use crate::hunt::Detection;
+use crate::hunt::{Detection, Events, Kind, Mapping};
 
 #[cfg(not(windows))]
 pub const RULE_PREFIX: &str = "‣ ";
@@ -62,7 +63,7 @@ pub fn format_field_length(data: &str, full_output: bool, length: u32) -> String
     data
 }
 
-pub fn print_detections(detections: &[Detection], column_width: u32) {
+pub fn print_detections(detections: &[Detection], mappings: &[Mapping], column_width: u32) {
     let format = format::FormatBuilder::new()
         .column_separator('│')
         .borders('│')
@@ -81,6 +82,13 @@ pub fn print_detections(detections: &[Detection], column_width: u32) {
         .padding(1, 1)
         .build();
 
+    // TODO: Remove
+    let mappings: HashMap<&String, &Events> = mappings[0]
+        .events
+        .iter()
+        .map(|(_, e)| (&e.title, e))
+        .collect();
+
     let mut tables: HashMap<&String, Vec<&Detection>> = HashMap::new();
     for detection in detections {
         let hits = tables.entry(&detection.group).or_insert(vec![]);
@@ -88,12 +96,13 @@ pub fn print_detections(detections: &[Detection], column_width: u32) {
     }
 
     for (group, mut rows) in tables {
+        let mapping = mappings.get(group).unwrap();
         let mut headers = vec![cell!("timestamp").style_spec("c")];
         let mut order = vec![];
-        for c in rows[0].data.keys() {
-            let cell = cell!(c).style_spec("c");
+        for c in &mapping.table_headers {
+            let cell = cell!(c.0).style_spec("c");
             headers.push(cell);
-            order.push(c);
+            order.push(c.1);
         }
         let mut table = Table::new();
         table.set_format(format);
@@ -103,16 +112,19 @@ pub fn print_detections(detections: &[Detection], column_width: u32) {
         for row in rows {
             let mut cells = vec![cell!(row.timestamp)];
             for key in &order {
-                if let Some(value) = row.data.get(key.as_str()) {
-                    cells.push(cell!(format_field_length(value, false, column_width)));
-                } else {
-                    cells.push(cell!(""));
+                if let Kind::Individual { document } = &row.kind {
+                    if let Some(value) =
+                        document.data.find(key.as_str()).and_then(|v| v.to_string())
+                    {
+                        cells.push(cell!(format_field_length(&value, false, column_width)));
+                    } else {
+                        cells.push(cell!(""));
+                    }
                 }
             }
             table.add_row(Row::new(cells));
         }
         cs_greenln!("\n[+] Detection: {}", group);
         cs_print_table!(table);
-        break;
     }
 }
