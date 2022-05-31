@@ -3,7 +3,7 @@ extern crate anyhow;
 
 pub(crate) use anyhow::Result;
 
-pub use file::{evtx, get_files};
+pub use file::{evtx, get_files, Reader};
 pub use hunt::{Detection, Hunter, HunterBuilder};
 pub use rule::{lint_rule, load_rule, Kind as RuleKind};
 pub use search::{Searcher, SearcherBuilder};

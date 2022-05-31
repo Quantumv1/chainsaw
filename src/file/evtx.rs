@@ -3,9 +3,7 @@ use std::fs::File;
 use std::path::Path;
 
 use chrono::NaiveDateTime;
-use evtx::{EvtxParser, ParserSettings, SerializedEvtxRecord};
-#[cfg(windows)]
-use is_elevated::is_elevated as user_is_elevated;
+use evtx::{err::EvtxError, EvtxParser, ParserSettings, SerializedEvtxRecord};
 use regex::Regex;
 use serde_json::Value as Json;
 use tau_engine::{AsValue, Document, Value as Tau};
@@ -14,6 +12,28 @@ use crate::hunt::{Hit, Huntable, Mapping};
 use crate::rule::Rule;
 use crate::search::Searchable;
 
+pub type Evtx = SerializedEvtxRecord<Json>;
+
+pub struct Parser {
+    pub inner: EvtxParser<File>,
+}
+
+impl Parser {
+    pub fn load(file: &Path) -> crate::Result<Self> {
+        let settings = ParserSettings::default()
+            .separate_json_attributes(true)
+            .num_threads(0);
+        let parser = EvtxParser::from_path(file)?.with_configuration(settings);
+        Ok(Self { inner: parser })
+    }
+
+    pub fn parse(
+        &mut self,
+    ) -> impl Iterator<Item = Result<SerializedEvtxRecord<serde_json::Value>, EvtxError>> + '_ {
+        self.inner.records_json_value()
+    }
+}
+
 pub struct Wrapper<'a>(&'a HashMap<String, String>, &'a Json);
 impl<'a> Document for Wrapper<'a> {
     fn find(&self, key: &str) -> Option<Tau<'_>> {
@@ -21,7 +41,7 @@ impl<'a> Document for Wrapper<'a> {
     }
 }
 
-impl Huntable for SerializedEvtxRecord<Json> {
+impl Huntable for &SerializedEvtxRecord<Json> {
     fn created(&self) -> crate::Result<NaiveDateTime> {
         match NaiveDateTime::parse_from_str(
             self.data["Event"]["System"]["TimeCreated_attributes"]["SystemTime"]
@@ -194,13 +214,4 @@ impl Searchable for SerializedEvtxRecord<Json> {
         }
         true
     }
-}
-
-// TODO: Remove
-pub fn parse_file(evtx_file: &Path) -> crate::Result<EvtxParser<File>> {
-    let settings = ParserSettings::default()
-        .separate_json_attributes(true)
-        .num_threads(0);
-    let parser = EvtxParser::from_path(evtx_file)?.with_configuration(settings);
-    Ok(parser)
 }

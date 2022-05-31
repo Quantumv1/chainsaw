@@ -1,54 +1,54 @@
-use std::fs::File;
 use std::path::Path;
 
-use ::evtx::{EvtxParser, SerializedEvtxRecord};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use regex::Regex;
 use serde_json::Value as Json;
 
-use crate::file::evtx;
+use crate::file::{Document, Documents, Reader};
 
 pub struct Hits<'a> {
-    parser: EvtxParser<File>,
+    reader: Reader,
     searcher: &'a SearcherInner,
 }
 
 impl<'a> Hits<'a> {
-    pub fn iter(&mut self) -> HitsIter<'_> {
-        HitsIter {
-            it: Box::new(self.parser.records_json_value()),
+    pub fn iter(&mut self) -> Iter<'_> {
+        Iter {
+            documents: self.reader.documents(),
             searcher: self.searcher,
         }
     }
 }
 
-pub struct HitsIter<'b> {
-    it: Box<
-        dyn Iterator<Item = Result<SerializedEvtxRecord<serde_json::Value>, ::evtx::err::EvtxError>>
-            + 'b,
-    >,
-    searcher: &'b SearcherInner,
+pub struct Iter<'a> {
+    documents: Documents<'a>,
+    searcher: &'a SearcherInner,
 }
 
-impl<'a> Iterator for HitsIter<'a> {
+impl<'a> Iterator for Iter<'a> {
     type Item = crate::Result<Json>;
 
-    fn next(&mut self) -> Option<crate::Result<Json>> {
-        while let Some(record) = self.it.next() {
-            let r = match record {
-                Ok(record) => record,
-                Err(_) => {
-                    continue;
-                }
-            };
-            let timestamp = match r.created() {
-                Ok(timestamp) => timestamp,
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(document) = self.documents.next() {
+            let document = match document {
+                Ok(document) => document,
                 Err(e) => {
                     if self.searcher.skip_errors {
                         continue;
                     }
-                    return Some(Err(anyhow!("could not get timestamp - {}", e)));
+                    return Some(Err(e));
                 }
+            };
+            let timestamp = match &document {
+                Document::Evtx(evtx) => match evtx.created() {
+                    Ok(timestamp) => timestamp,
+                    Err(e) => {
+                        if self.searcher.skip_errors {
+                            continue;
+                        }
+                        return Some(Err(anyhow!("could not get timestamp - {}", e)));
+                    }
+                },
             };
             if self.searcher.from.is_some() || self.searcher.to.is_some() {
                 let localised = DateTime::<Utc>::from_utc(timestamp, Utc);
@@ -65,6 +65,10 @@ impl<'a> Iterator for HitsIter<'a> {
                     }
                 }
             }
+            // TODO: Finish this off...
+            let r = match document {
+                Document::Evtx(evtx) => evtx,
+            };
             // TODO: Remove me
             let event_id = if r.data["Event"]["System"]["EventID"]["#text"].is_null() {
                 &r.data["Event"]["System"]["EventID"]
@@ -185,19 +189,10 @@ impl Searcher {
         SearcherBuilder::new()
     }
 
-    pub fn search(&self, file: &Path) -> crate::Result<Hits> {
-        // TODO: We probably want to abstract this?
-        let parser = match evtx::parse_file(file) {
-            Ok(a) => a,
-            Err(e) => {
-                //if self.inner.skip_errors {
-                //    return Ok(vec![]);
-                //}
-                anyhow::bail!("{:?} - {}", file, e);
-            }
-        };
+    pub fn search(&self, file: &Path) -> crate::Result<Hits<'_>> {
+        let reader = Reader::load(file)?;
         Ok(Hits {
-            parser,
+            reader,
             searcher: &self.inner,
         })
     }

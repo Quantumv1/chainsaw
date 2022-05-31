@@ -142,7 +142,7 @@ fn init_writer(output: Option<PathBuf>, json: bool, quiet: bool) -> crate::Resul
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn run() -> Result<()> {
     let opts = Opts::from_args();
     match opts.cmd {
         Command::Hunt {
@@ -357,4 +357,11 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        cs_eredln!("[x] {}", e);
+        std::process::exit(1);
+    }
 }

@@ -7,7 +7,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use crate::file::evtx;
+use crate::file::{Document as Doc, Reader};
 use crate::rule::{Kind as RuleKind, Rule};
 
 #[derive(Deserialize)]
@@ -165,33 +165,31 @@ impl Hunter {
     }
 
     pub fn hunt(&self, file: &Path) -> crate::Result<Vec<Detections>> {
-        // TODO: We probably want to abstract this?
-        let mut parser = match evtx::parse_file(file) {
-            Ok(a) => a,
-            Err(e) => {
-                if self.inner.skip_errors {
-                    return Ok(vec![]);
-                }
-                anyhow::bail!("{:?} - {}", file, e);
-            }
-        };
+        let mut reader = Reader::load(file)?;
         let mut detections = vec![];
-        for record in parser.records_json_value() {
-            let r = match record {
-                Ok(record) => record,
-                Err(_) => {
-                    continue;
-                }
-            };
-            let timestamp = match r.created() {
-                Ok(timestamp) => timestamp,
+        for document in reader.documents() {
+            let document = match document {
+                Ok(document) => document,
                 Err(e) => {
                     if self.inner.skip_errors {
                         continue;
                     }
-                    anyhow::bail!("could not get timestamp - {}", e);
+                    return Err(e);
                 }
             };
+
+            let timestamp = match &document {
+                Doc::Evtx(evtx) => match evtx.created() {
+                    Ok(timestamp) => timestamp,
+                    Err(e) => {
+                        if self.inner.skip_errors {
+                            continue;
+                        }
+                        anyhow::bail!("could not get timestamp - {}", e);
+                    }
+                },
+            };
+
             if self.inner.from.is_some() || self.inner.to.is_some() {
                 let localised = DateTime::<Utc>::from_utc(timestamp, Utc);
                 // Check if event is older than start date marker
@@ -209,16 +207,21 @@ impl Hunter {
             }
 
             if self.inner.mappings.is_empty() {
-                if let Some(hits) = r.hits(&self.inner.rules, None) {
+                if let Some(hits) = match &document {
+                    Doc::Evtx(evtx) => evtx.hits(&self.inner.rules, None),
+                } {
                     if hits.is_empty() {
                         continue;
                     }
+                    let data = match document {
+                        Doc::Evtx(evtx) => evtx.data,
+                    };
                     detections.push(Detections {
                         hits,
                         kind: Kind::Individual {
                             document: Document {
                                 kind: "evtx".to_owned(),
-                                data: r.data.clone(),
+                                data,
                             },
                         },
                         mapping: None,
@@ -230,16 +233,21 @@ impl Hunter {
                     if mapping.kind != "evtx" {
                         continue;
                     }
-                    if let Some(hits) = r.hits(&self.inner.rules, Some(&mapping)) {
+                    if let Some(hits) = match &document {
+                        Doc::Evtx(evtx) => evtx.hits(&self.inner.rules, Some(&mapping)),
+                    } {
                         if hits.is_empty() {
                             continue;
                         }
+                        let data = match &document {
+                            Doc::Evtx(evtx) => evtx.data.clone(),
+                        };
                         detections.push(Detections {
                             hits,
                             kind: Kind::Individual {
                                 document: Document {
                                     kind: "evtx".to_owned(),
-                                    data: r.data.clone(),
+                                    data,
                                 },
                             },
                             mapping: Some(mapping.name.clone()),
