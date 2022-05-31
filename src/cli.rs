@@ -1,17 +1,17 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use prettytable::{cell, format, Row, Table};
 use tau_engine::Document;
 
-use crate::hunt::{Detections, Kind, Mapping};
+use crate::hunt::{Detection, Detections, Kind, Mapping};
 use crate::rule::Rule;
 
 #[cfg(not(windows))]
-pub const RULE_PREFIX: &str = "‣ ";
+pub const RULE_PREFIX: &str = "‣";
 
 #[cfg(windows)]
-pub const RULE_PREFIX: &str = "+ ";
+pub const RULE_PREFIX: &str = "+";
 
 #[cfg(not(windows))]
 const TICK_SETTINGS: (&str, u64) = ("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ", 80);
@@ -69,6 +69,7 @@ pub fn print_detections(
     mappings: &[Mapping],
     rules: &[Rule],
     column_width: u32,
+    full: bool,
 ) {
     let format = format::FormatBuilder::new()
         .column_separator('│')
@@ -92,7 +93,7 @@ pub fn print_detections(
         .iter()
         .map(|m| (&m.name, m.groups.iter().map(|g| (&g.name, g)).collect()))
         .collect();
-    let rules: HashMap<_, _> = rules.iter().map(|r| (&r.tag, r)).collect();
+    let _rules: HashMap<_, _> = rules.iter().map(|r| (&r.tag, r)).collect();
 
     let empty = "".to_owned();
     let mut tables: HashMap<&String, (Row, Vec<Row>)> = HashMap::new();
@@ -116,7 +117,7 @@ pub fn print_detections(
                         cell!(detection
                             .hits
                             .iter()
-                            .map(|h| h.tag.as_str())
+                            .map(|h| format!("{} {}", RULE_PREFIX, h.tag.as_str()))
                             .collect::<Vec<_>>()
                             .join("\n")),
                     ];
@@ -129,7 +130,7 @@ pub fn print_detections(
                                 .and_then(|k| document.data.find(k))
                                 .and_then(|v| v.to_string())
                             {
-                                cells.push(cell!(format_field_length(&value, false, column_width)));
+                                cells.push(cell!(format_field_length(&value, full, column_width)));
                             } else {
                                 cells.push(cell!(""));
                             }
@@ -152,7 +153,7 @@ pub fn print_detections(
                 cell!(detection
                     .hits
                     .iter()
-                    .map(|h| h.tag.as_str())
+                    .map(|h| format!("{} {}", RULE_PREFIX, h.tag.as_str()))
                     .collect::<Vec<_>>()
                     .join("\n")),
             ];
@@ -183,4 +184,32 @@ pub fn print_detections(
         cs_greenln!("\n[+] Group: {}", key);
         cs_print_table!(t);
     }
+}
+
+pub fn print_json(detections: &[Detections], rules: &[Rule]) -> crate::Result<()> {
+    // TODO: Fixme...
+    let ruleset = "sigma".to_owned();
+    let rules: HashMap<_, _> = rules.iter().map(|r| (&r.tag, r)).collect();
+    cs_print_json!(&detections
+        .iter()
+        .map(|d| {
+            let mut detections = Vec::with_capacity(d.hits.len());
+            for hit in &d.hits {
+                let rule = rules.get(&hit.tag).expect("could not get rule!");
+                detections.push(Detection {
+                    authors: &rule.authors,
+                    group: &hit.group,
+                    kind: &d.kind,
+                    level: &rule.level,
+                    name: &hit.tag,
+                    ruleset: &ruleset,
+                    status: &rule.status,
+                    timestamp: &d.timestamp,
+                })
+            }
+            detections
+        })
+        .flatten()
+        .collect::<Vec<Detection>>())?;
+    Ok(())
 }

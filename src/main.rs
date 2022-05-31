@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate chainsaw;
 
-use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -11,11 +10,8 @@ use regex::Regex;
 use structopt::StructOpt;
 use walkdir::WalkDir;
 
-// TODO: Remove
-use ::evtx::{EvtxParser, ParserSettings};
-
 use chainsaw::{
-    cli, evtx, lint_rule, load_rule, set_writer, Detection, Format, Hunter, RuleKind, Writer,
+    cli, get_files, lint_rule, load_rule, set_writer, Format, Hunter, RuleKind, Searcher, Writer,
 };
 
 #[derive(StructOpt)]
@@ -46,10 +42,12 @@ enum Command {
 
         #[structopt(long = "column-width")]
         column_width: Option<u32>,
-        #[structopt(group = "format", long = "csv")]
-        csv: bool,
+        #[structopt(long = "extension")]
+        extension: Option<String>,
         #[structopt(long = "from")]
         from: Option<NaiveDateTime>,
+        #[structopt(long = "full")]
+        full: bool,
         #[structopt(group = "format", long = "json")]
         json: bool,
         #[structopt(short = "o", long = "output")]
@@ -79,9 +77,11 @@ enum Command {
         #[structopt(short = "e", long = "regexp", number_of_values = 1)]
         regexp: Option<Regex>,
 
-        // TODO: Remove this
+        // TODO: Remove this as its not generic
         #[structopt(long = "event")]
         event_id: Option<u32>,
+        #[structopt(long = "extension")]
+        extension: Option<String>,
         #[structopt(long = "from")]
         from: Option<NaiveDateTime>,
         #[structopt(short = "i", long = "ignore-case")]
@@ -113,7 +113,7 @@ fn print_title() {
     );
 }
 
-fn init_writer(output: Option<PathBuf>, csv: bool, json: bool, quiet: bool) -> crate::Result<()> {
+fn init_writer(output: Option<PathBuf>, json: bool, quiet: bool) -> crate::Result<()> {
     let output = match &output {
         Some(path) => {
             let file = match File::create(path) {
@@ -130,13 +130,7 @@ fn init_writer(output: Option<PathBuf>, csv: bool, json: bool, quiet: bool) -> c
         }
         None => None,
     };
-    let format = if csv {
-        Format::Csv
-    } else if json {
-        Format::Json
-    } else {
-        Format::Std
-    };
+    let format = if json { Format::Json } else { Format::Std };
     let writer = Writer {
         format,
         output,
@@ -157,15 +151,16 @@ fn main() -> Result<()> {
             rule,
 
             column_width,
-            csv,
+            extension,
             from,
+            full,
             json,
             output,
             quiet,
             skip_errors,
             to,
         } => {
-            init_writer(output, csv, json, quiet)?;
+            init_writer(output, json, quiet)?;
             if !opts.no_banner {
                 print_title();
             }
@@ -210,10 +205,9 @@ fn main() -> Result<()> {
                 hunter = hunter.to(to);
             }
             let hunter = hunter.build()?;
-            // TODO: Abstract away from evtx...
             let mut files = vec![];
             for path in &path {
-                files.extend(evtx::get_files(path)?);
+                files.extend(get_files(path, &extension)?);
             }
             let mut detections = vec![];
             let pb = cli::init_progress_bar(files.len() as u64, "Hunting".to_string());
@@ -224,39 +218,15 @@ fn main() -> Result<()> {
             }
             pb.finish();
             detections.sort_by(|x, y| x.timestamp.cmp(&y.timestamp));
-            if csv {
-                // TODO:
-            } else if json {
-                // TODO: Fixme...
-                let ruleset = "sigma".to_owned();
-                let rules: HashMap<_, _> = hunter.rules().iter().map(|r| (&r.tag, r)).collect();
-                cs_print_json!(&detections
-                    .iter()
-                    .map(|d| {
-                        let mut detections = Vec::with_capacity(d.hits.len());
-                        for hit in &d.hits {
-                            let rule = rules.get(&hit.tag).expect("could not get rule!");
-                            detections.push(Detection {
-                                authors: &rule.authors,
-                                group: &hit.group,
-                                kind: &d.kind,
-                                level: &rule.level,
-                                name: &hit.tag,
-                                ruleset: &ruleset,
-                                status: &rule.status,
-                                timestamp: &d.timestamp,
-                            })
-                        }
-                        detections
-                    })
-                    .flatten()
-                    .collect::<Vec<Detection>>())?;
+            if json {
+                cli::print_json(&detections, hunter.rules())?;
             } else {
                 cli::print_detections(
                     &detections,
                     hunter.mappings(),
                     hunter.rules(),
                     column_width.unwrap_or(40),
+                    full,
                 );
             }
             cs_eprintln!(
@@ -266,7 +236,7 @@ fn main() -> Result<()> {
             );
         }
         Command::Lint { path, kind } => {
-            init_writer(None, false, false, false)?;
+            init_writer(None, false, false)?;
             if !opts.no_banner {
                 print_title();
             }
@@ -298,6 +268,7 @@ fn main() -> Result<()> {
             regexp,
 
             event_id,
+            extension,
             from,
             ignore_case,
             json,
@@ -306,7 +277,7 @@ fn main() -> Result<()> {
             skip_errors,
             to,
         } => {
-            init_writer(output, false, json, quiet)?;
+            init_writer(output, json, quiet)?;
             if !opts.no_banner {
                 print_title();
             }
@@ -325,46 +296,55 @@ fn main() -> Result<()> {
                     std::env::current_dir().expect("could not get current working directory"),
                 );
             }
-            // TODO: Abstract away from evtx...
             let mut files = vec![];
             for path in &paths {
-                files.extend(evtx::get_files(path)?);
+                files.extend(get_files(path, &extension)?);
             }
-            let mut hits = 0;
+            let mut searcher = Searcher::builder()
+                .ignore_case(ignore_case)
+                .skip_errors(skip_errors);
+            if let Some(event_id) = event_id {
+                searcher = searcher.event_id(event_id);
+            }
+            if let Some(pattern) = pattern {
+                searcher = searcher.pattern(pattern);
+            }
+            if let Some(regexp) = regexp {
+                searcher = searcher.regex(regexp);
+            }
+            if let Some(from) = from {
+                searcher = searcher.from(from);
+            }
+            if let Some(to) = to {
+                searcher = searcher.to(to);
+            }
+            let searcher = searcher.build()?;
             cs_eprintln!("[+] Searching event logs...");
             if json {
                 cs_print!("[");
             }
-            for evtx in &files {
-                let kind = infer::get_from_path(evtx);
-                println!("{:?}", kind);
-                std::process::exit(1);
-                // Parse EVTx files
-                let settings = ParserSettings::default()
-                    .separate_json_attributes(true)
-                    .num_threads(0);
-                let parser = match EvtxParser::from_path(evtx) {
-                    Ok(a) => a.with_configuration(settings),
-                    Err(e) => {
-                        if skip_errors {
-                            continue;
+            let mut hits = 0;
+            for file in &files {
+                for res in searcher.search(file)?.iter() {
+                    let hit = match res {
+                        Ok(hit) => hit,
+                        Err(e) => {
+                            if skip_errors {
+                                continue;
+                            }
+                            anyhow::bail!("Failed to search file... - {}", e);
                         }
-                        anyhow::bail!("{:?} - {}", evtx, e);
+                    };
+                    if json {
+                        if !(hits == 0) {
+                            cs_print!(",");
+                        }
+                        cs_print_json!(&hit)?;
+                    } else {
+                        cs_print_yaml!(&hit)?;
                     }
-                };
-
-                // Search EVTX files for user supplied arguments
-                hits += evtx::search(
-                    parser,
-                    &pattern,
-                    &regexp,
-                    hits == 0,
-                    from,
-                    to,
-                    event_id,
-                    ignore_case,
-                    json,
-                )?;
+                    hits += 1;
+                }
             }
             if json {
                 cs_println!("]");

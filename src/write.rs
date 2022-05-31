@@ -1,5 +1,4 @@
 use std::fs::File;
-use std::path::PathBuf;
 
 use anyhow::Result;
 
@@ -11,7 +10,6 @@ pub static mut WRITER: Writer = Writer {
 
 pub enum Format {
     Std,
-    Csv,
     Json,
 }
 
@@ -129,6 +127,7 @@ macro_rules! cs_print_json {
     }};
 }
 
+#[macro_export]
 macro_rules! cs_print_yaml {
     ($value:expr) => {{
         use std::io::Write;
