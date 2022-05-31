@@ -70,6 +70,7 @@ pub fn print_detections(
     rules: &[Rule],
     column_width: u32,
     full: bool,
+    metadata: bool,
 ) {
     let format = format::FormatBuilder::new()
         .column_separator('│')
@@ -93,7 +94,7 @@ pub fn print_detections(
         .iter()
         .map(|m| (&m.name, m.groups.iter().map(|g| (&g.name, g)).collect()))
         .collect();
-    let _rules: HashMap<_, _> = rules.iter().map(|r| (&r.tag, r)).collect();
+    let rules: HashMap<_, _> = rules.iter().map(|r| (&r.tag, r)).collect();
 
     let empty = "".to_owned();
     let mut tables: HashMap<&String, (Row, Vec<Row>)> = HashMap::new();
@@ -112,15 +113,33 @@ pub fn print_detections(
                         cell!("timestamp").style_spec("c"),
                         cell!("detections").style_spec("c"),
                     ];
-                    let mut cells = vec![
-                        cell!(detection.timestamp),
-                        cell!(detection
+                    let mut cells = vec![cell!(detection.timestamp)];
+                    if metadata {
+                        let mut table = Table::new();
+                        table.add_row(Row::new(vec![
+                            cell!("name").style_spec("c"),
+                            cell!("authors").style_spec("c"),
+                            cell!("level").style_spec("c"),
+                            cell!("status").style_spec("c"),
+                        ]));
+                        for hit in &detection.hits {
+                            let rule = rules.get(&hit.tag).expect("could not get rule");
+                            table.add_row(Row::new(vec![
+                                cell!(hit.tag),
+                                cell!(rule.authors.join("\n")),
+                                cell!(rule.level),
+                                cell!(rule.status),
+                            ]));
+                        }
+                        cells.push(cell!(table));
+                    } else {
+                        cells.push(cell!(detection
                             .hits
                             .iter()
                             .map(|h| format!("{} {}", RULE_PREFIX, h.tag.as_str()))
                             .collect::<Vec<_>>()
-                            .join("\n")),
-                    ];
+                            .join("\n")));
+                    }
                     if let Some(default) = group.default.as_ref() {
                         for field in default {
                             header.push(cell!(field).style_spec("c"));

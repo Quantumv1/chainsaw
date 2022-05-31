@@ -50,6 +50,8 @@ enum Command {
         full: bool,
         #[structopt(group = "format", long = "json")]
         json: bool,
+        #[structopt(long = "metadata")]
+        metadata: bool,
         #[structopt(short = "o", long = "output")]
         output: Option<PathBuf>,
         #[structopt(short = "q")]
@@ -155,6 +157,7 @@ fn main() -> Result<()> {
             from,
             full,
             json,
+            metadata,
             output,
             quiet,
             skip_errors,
@@ -227,6 +230,7 @@ fn main() -> Result<()> {
                     hunter.rules(),
                     column_width.unwrap_or(40),
                     full,
+                    metadata,
                 );
             }
             cs_eprintln!(
