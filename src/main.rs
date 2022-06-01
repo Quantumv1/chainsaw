@@ -220,7 +220,6 @@ fn run() -> Result<()> {
                 pb.inc(1);
             }
             pb.finish();
-            detections.sort_by(|x, y| x.timestamp.cmp(&y.timestamp));
             if json {
                 cli::print_json(&detections, hunter.rules())?;
             } else {

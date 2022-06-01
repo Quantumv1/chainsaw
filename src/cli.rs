@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chrono::NaiveDateTime;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use prettytable::{cell, format, Row, Table};
 use tau_engine::Document;
@@ -96,24 +97,52 @@ pub fn print_detections(
         .collect();
     let rules: HashMap<_, _> = rules.iter().map(|r| (&r.tag, r)).collect();
 
-    let empty = "".to_owned();
-    let mut tables: HashMap<&String, (Row, Vec<Row>)> = HashMap::new();
+    // Do a signle unfold...
+    let mut grouped: HashMap<
+        (&Option<String>, &String),
+        Vec<(&NaiveDateTime, &Kind, Vec<&String>)>,
+    > = HashMap::new();
     for detection in detections {
-        let document = match &detection.kind {
-            Kind::Individual { document } => document,
-            _ => continue,
-        };
-        if let Some(mapping) = &detection.mapping {
+        let mut tags: HashMap<(&Option<String>, &String), (&NaiveDateTime, Vec<&String>)> =
+            HashMap::new();
+        for hit in &detection.hits {
+            let tags = tags
+                .entry((&hit.mapping, &hit.group))
+                .or_insert((&hit.timestamp, vec![]));
+            (*tags).1.push(&hit.tag);
+        }
+        for (k, v) in tags {
+            let grouped = grouped.entry(k).or_insert(vec![]);
+            (*grouped).push((&v.0, &detection.kind, v.1));
+        }
+    }
+
+    let mut keys = grouped.keys().cloned().collect::<Vec<_>>();
+    keys.sort();
+    for key in keys {
+        let mut grouped = grouped.remove(&key).expect("could not get grouped!");
+        grouped.sort_by(|x, y| x.0.cmp(&y.0));
+        let mut table = Table::new();
+        table.set_format(format);
+        let (mapping, group) = key;
+        if let Some(mapping) = mapping {
             if let Some(groups) = mappings.get(mapping) {
-                for hit in &detection.hits {
-                    let group = groups
-                        .get(&hit.group.as_ref().expect("group is not set!"))
-                        .expect("could not get group!");
-                    let mut header = vec![
-                        cell!("timestamp").style_spec("c"),
-                        cell!("detections").style_spec("c"),
-                    ];
-                    let mut cells = vec![cell!(detection.timestamp)];
+                let group = groups.get(&group).expect("could not get group!");
+                let mut header = vec![
+                    cell!("timestamp").style_spec("c"),
+                    cell!("detections").style_spec("c"),
+                ];
+                if let Some(default) = group.default.as_ref() {
+                    for field in default {
+                        header.push(cell!(field).style_spec("c"));
+                    }
+                } else {
+                    header.push(cell!("data").style_spec("c"));
+                }
+                table.add_row(Row::new(header));
+                for (timestamp, kind, mut tags) in grouped {
+                    tags.sort();
+                    let mut cells = vec![cell!(timestamp)];
                     if metadata {
                         let mut table = Table::new();
                         table.add_row(Row::new(vec![
@@ -122,10 +151,10 @@ pub fn print_detections(
                             cell!("level").style_spec("c"),
                             cell!("status").style_spec("c"),
                         ]));
-                        for hit in &detection.hits {
-                            let rule = rules.get(&hit.tag).expect("could not get rule");
+                        for tag in tags {
+                            let rule = rules.get(&tag).expect("could not get rule");
                             table.add_row(Row::new(vec![
-                                cell!(hit.tag),
+                                cell!(tag),
                                 cell!(rule.authors.join("\n")),
                                 cell!(rule.level),
                                 cell!(rule.status),
@@ -133,16 +162,18 @@ pub fn print_detections(
                         }
                         cells.push(cell!(table));
                     } else {
-                        cells.push(cell!(detection
-                            .hits
+                        cells.push(cell!(tags
                             .iter()
-                            .map(|h| format!("{} {}", RULE_PREFIX, h.tag.as_str()))
+                            .map(|tag| format!("{} {}", RULE_PREFIX, tag.as_str()))
                             .collect::<Vec<_>>()
                             .join("\n")));
                     }
+                    let document = match kind {
+                        Kind::Individual { document } => document,
+                        _ => continue,
+                    };
                     if let Some(default) = group.default.as_ref() {
                         for field in default {
-                            header.push(cell!(field).style_spec("c"));
                             if let Some(value) = group
                                 .fields
                                 .get(field)
@@ -155,53 +186,16 @@ pub fn print_detections(
                             }
                         }
                     } else {
-                        header.push(cell!("data").style_spec("c"));
                         let json = serde_json::to_string(&document.data)
                             .expect("could not serialise document");
                         cells.push(cell!(format_field_length(&json, false, column_width)));
                     }
-                    let table = tables
-                        .entry(&group.name)
-                        .or_insert((Row::new(header), vec![]));
-                    (*table).1.push(Row::new(cells));
+                    table.add_row(Row::new(cells));
                 }
             }
-        } else {
-            let mut cells = vec![
-                cell!(detection.timestamp),
-                cell!(detection
-                    .hits
-                    .iter()
-                    .map(|h| format!("{} {}", RULE_PREFIX, h.tag.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("\n")),
-            ];
-            let json = serde_json::to_string(&document.data).expect("could not serialise document");
-            cells.push(cell!(format_field_length(&json, false, column_width)));
-            let rows = tables.entry(&empty).or_insert((
-                Row::new(vec![
-                    cell!("timestamp").style_spec("c"),
-                    cell!("detections").style_spec("c"),
-                    cell!("data").style_spec("c"),
-                ]),
-                vec![],
-            ));
-            (*rows).1.push(Row::new(cells));
         }
-    }
-
-    let mut keys = tables.keys().cloned().collect::<Vec<_>>();
-    keys.sort();
-    for key in keys {
-        let table = tables.remove(key).expect("could not get table!");
-        let mut t = Table::new();
-        t.set_format(format);
-        t.add_row(table.0);
-        for row in table.1 {
-            t.add_row(row);
-        }
-        cs_greenln!("\n[+] Group: {}", key);
-        cs_print_table!(t);
+        cs_greenln!("\n[+] Group: {}", key.1);
+        cs_print_table!(table);
     }
 }
 
@@ -209,7 +203,7 @@ pub fn print_json(detections: &[Detections], rules: &[Rule]) -> crate::Result<()
     // TODO: Fixme...
     let ruleset = "sigma".to_owned();
     let rules: HashMap<_, _> = rules.iter().map(|r| (&r.tag, r)).collect();
-    cs_print_json!(&detections
+    let mut detections = detections
         .iter()
         .map(|d| {
             let mut detections = Vec::with_capacity(d.hits.len());
@@ -221,14 +215,16 @@ pub fn print_json(detections: &[Detections], rules: &[Rule]) -> crate::Result<()
                     kind: &d.kind,
                     level: &rule.level,
                     name: &hit.tag,
-                    ruleset: &ruleset,
+                    source: &ruleset,
                     status: &rule.status,
-                    timestamp: &d.timestamp,
+                    timestamp: &hit.timestamp,
                 })
             }
             detections
         })
         .flatten()
-        .collect::<Vec<Detection>>())?;
+        .collect::<Vec<Detection>>();
+    detections.sort_by(|x, y| x.timestamp.cmp(&y.timestamp));
+    cs_print_json!(&detections)?;
     Ok(())
 }

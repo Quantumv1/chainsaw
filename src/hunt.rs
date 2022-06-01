@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
+use tau_engine::Document as Docu;
 
 use crate::file::{Document as Doc, Reader};
 use crate::rule::{Kind as RuleKind, Rule};
@@ -17,6 +18,7 @@ pub struct Group {
     pub fields: HashMap<String, String>,
     pub filters: Vec<HashMap<String, Json>>,
     pub name: String,
+    pub timestamp: String,
 }
 
 #[derive(Deserialize)]
@@ -30,26 +32,26 @@ pub struct Mapping {
 }
 
 pub struct Hit {
+    pub group: String,
+    pub mapping: Option<String>,
     pub tag: String,
-    pub group: Option<String>,
+    pub timestamp: NaiveDateTime,
 }
 
 pub struct Detections {
     pub hits: Vec<Hit>,
     pub kind: Kind,
-    pub mapping: Option<String>,
-    pub timestamp: NaiveDateTime,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Detection<'a> {
     pub authors: &'a Vec<String>,
-    pub group: &'a Option<String>,
+    pub group: &'a String,
     #[serde(flatten)]
     pub kind: &'a Kind,
     pub level: &'a String,
     pub name: &'a String,
-    pub ruleset: &'a String,
+    pub source: &'a String,
     pub status: &'a String,
     pub timestamp: &'a NaiveDateTime,
 }
@@ -68,8 +70,12 @@ pub enum Kind {
 }
 
 pub trait Huntable {
-    fn created(&self) -> crate::Result<NaiveDateTime>;
-    fn hits(&self, rules: &[Rule], mapping: Option<&Mapping>) -> Option<Vec<Hit>>;
+    fn hits(
+        &self,
+        rules: &[Rule],
+        exclusions: &HashSet<String>,
+        group: &Group,
+    ) -> Option<Vec<String>>;
 }
 
 #[derive(Default)]
@@ -178,83 +184,86 @@ impl Hunter {
                 }
             };
 
-            let timestamp = match &document {
-                Doc::Evtx(evtx) => match evtx.created() {
-                    Ok(timestamp) => timestamp,
-                    Err(e) => {
-                        if self.inner.skip_errors {
-                            continue;
-                        }
-                        anyhow::bail!("could not get timestamp - {}", e);
-                    }
-                },
-            };
+            // The logic is as follows, all rules except chainsaw ones need a mapping.
 
-            if self.inner.from.is_some() || self.inner.to.is_some() {
-                let localised = DateTime::<Utc>::from_utc(timestamp, Utc);
-                // Check if event is older than start date marker
-                if let Some(sd) = self.inner.from {
-                    if localised <= sd {
-                        continue;
-                    }
-                }
-                // Check if event is newer than end date marker
-                if let Some(ed) = self.inner.to {
-                    if localised >= ed {
-                        continue;
-                    }
-                }
-            }
+            // TODO: Handle chainsaw rules...
 
-            if self.inner.mappings.is_empty() {
-                if let Some(hits) = match &document {
-                    Doc::Evtx(evtx) => evtx.hits(&self.inner.rules, None),
-                } {
-                    if hits.is_empty() {
-                        continue;
-                    }
-                    let data = match document {
-                        Doc::Evtx(evtx) => evtx.data,
-                    };
-                    detections.push(Detections {
-                        hits,
-                        kind: Kind::Individual {
-                            document: Document {
-                                kind: "evtx".to_owned(),
-                                data,
-                            },
-                        },
-                        mapping: None,
-                        timestamp,
-                    });
+            for mapping in &self.inner.mappings {
+                if mapping.kind != "evtx" {
+                    continue;
                 }
-            } else {
-                for mapping in &self.inner.mappings {
-                    if mapping.kind != "evtx" {
-                        continue;
-                    }
-                    if let Some(hits) = match &document {
-                        Doc::Evtx(evtx) => evtx.hits(&self.inner.rules, Some(&mapping)),
-                    } {
-                        if hits.is_empty() {
-                            continue;
-                        }
-                        let data = match &document {
-                            Doc::Evtx(evtx) => evtx.data.clone(),
-                        };
-                        detections.push(Detections {
-                            hits,
-                            kind: Kind::Individual {
-                                document: Document {
-                                    kind: "evtx".to_owned(),
-                                    data,
+
+                let mut hits = vec![];
+                for group in &mapping.groups {
+                    // TODO: Default to RFC 3339
+                    let timestamp = match &document {
+                        //Doc::Evtx(evtx) => match evtx.data.find(&group.timestamp) {
+                        Doc::Evtx(evtx) => match evtx
+                            .data
+                            .find("Event.System.TimeCreated_attributes.SystemTime")
+                        {
+                            Some(value) => match value.as_str() {
+                                Some(timestamp) => match NaiveDateTime::parse_from_str(
+                                    timestamp,
+                                    "%Y-%m-%dT%H:%M:%S%.6fZ",
+                                ) {
+                                    Ok(t) => t,
+                                    Err(e) => anyhow::bail!(
+                                        "failed to parse timestamp '{}' - {}",
+                                        timestamp,
+                                        e
+                                    ),
                                 },
+                                None => continue,
                             },
-                            mapping: Some(mapping.name.clone()),
-                            timestamp,
-                        });
+                            None => continue,
+                        },
+                    };
+
+                    if self.inner.from.is_some() || self.inner.to.is_some() {
+                        let localised = DateTime::<Utc>::from_utc(timestamp, Utc);
+                        // Check if event is older than start date marker
+                        if let Some(sd) = self.inner.from {
+                            if localised <= sd {
+                                continue;
+                            }
+                        }
+                        // Check if event is newer than end date marker
+                        if let Some(ed) = self.inner.to {
+                            if localised >= ed {
+                                continue;
+                            }
+                        }
+                    }
+                    if let Some(tags) = match &document {
+                        Doc::Evtx(evtx) => evtx.hits(&self.inner.rules, &mapping.exclusions, group),
+                    } {
+                        for tag in tags {
+                            hits.push(Hit {
+                                tag,
+                                group: group.name.clone(),
+                                mapping: Some(mapping.name.clone()),
+                                timestamp,
+                            });
+                        }
                     }
                 }
+
+                if hits.is_empty() {
+                    continue;
+                }
+                let data = match &document {
+                    Doc::Evtx(evtx) => evtx.data.clone(),
+                };
+                detections.push(Detections {
+                    hits,
+                    kind: Kind::Individual {
+                        document: Document {
+                            kind: "evtx".to_owned(),
+                            data,
+                        },
+                    },
+                });
             }
         }
         Ok(detections)

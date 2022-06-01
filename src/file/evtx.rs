@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::Path;
 
@@ -8,7 +8,7 @@ use regex::Regex;
 use serde_json::Value as Json;
 use tau_engine::{AsValue, Document, Value as Tau};
 
-use crate::hunt::{Hit, Huntable, Mapping};
+use crate::hunt::{Group, Huntable};
 use crate::rule::Rule;
 use crate::search::Searchable;
 
@@ -34,141 +34,108 @@ impl Parser {
     }
 }
 
-pub struct Wrapper<'a>(&'a HashMap<String, String>, &'a Json);
-impl<'a> Document for Wrapper<'a> {
+pub struct Mapper<'a>(&'a HashMap<String, String>, &'a Json);
+impl<'a> Document for Mapper<'a> {
     fn find(&self, key: &str) -> Option<Tau<'_>> {
         self.0.get(key).and_then(|v| self.1.find(v))
     }
 }
 
 impl Huntable for &SerializedEvtxRecord<Json> {
-    fn created(&self) -> crate::Result<NaiveDateTime> {
-        match NaiveDateTime::parse_from_str(
-            self.data["Event"]["System"]["TimeCreated_attributes"]["SystemTime"]
-                .as_str()
-                .unwrap(),
-            "%Y-%m-%dT%H:%M:%S%.6fZ",
-        ) {
-            Ok(t) => Ok(t),
-            Err(_) => anyhow::bail!(
-                "Failed to parse datetime from supplied events. This shouldn't happen..."
-            ),
-        }
-    }
-
-    fn hits(&self, rules: &[Rule], mapping: Option<&Mapping>) -> Option<Vec<Hit>> {
-        match mapping {
-            Some(mapping) => {
-                // Event logs are a PITA, they can be inconsistent in their designs...
-                let mut hits = vec![];
-                for group in &mapping.groups {
-                    let mut matched = false;
-                    for filter in &group.filters {
-                        for (k, v) in filter {
-                            // TODO: Don't filter like this, its slow AF...
-                            match k.as_str() {
-                                "Event.System.EventID" => {
-                                    if let Some(value) = self.data.find(k) {
-                                        match (value.to_string(), v.as_value().to_string()) {
-                                            (Some(x), Some(y)) => {
-                                                matched = x == y;
-                                            }
-                                            (_, _) => {
-                                                matched = false;
-                                            }
-                                        }
-                                        if matched == false {
-                                            break;
-                                        }
-                                        continue;
-                                    } else if let Some(value) =
-                                        self.data.find("Event.System.EventID.#text")
-                                    {
-                                        match (value.to_string(), v.as_value().to_string()) {
-                                            (Some(x), Some(y)) => {
-                                                matched = x == y;
-                                            }
-                                            (_, _) => {
-                                                matched = false;
-                                            }
-                                        }
-                                        if matched == false {
-                                            break;
-                                        }
-                                        continue;
-                                    }
+    fn hits(
+        &self,
+        rules: &[Rule],
+        exclusions: &HashSet<String>,
+        group: &Group,
+    ) -> Option<Vec<String>> {
+        let mut matched = false;
+        for filter in &group.filters {
+            for (k, v) in filter {
+                // TODO: Don't filter like this, its slow AF...
+                match k.as_str() {
+                    "Event.System.EventID" => {
+                        if let Some(value) = self.data.find(k) {
+                            match (value.to_string(), v.as_value().to_string()) {
+                                (Some(x), Some(y)) => {
+                                    matched = x == y;
                                 }
-                                "Event.System.Provider" => {
-                                    if let Some(value) =
-                                        self.data.find("Event.System.Provider_attributes.Name")
-                                    {
-                                        match (value.to_string(), v.as_value().to_string()) {
-                                            (Some(x), Some(y)) => {
-                                                matched = x == y;
-                                            }
-                                            (_, _) => {
-                                                matched = false;
-                                            }
-                                        }
-                                        if matched == false {
-                                            break;
-                                        }
-                                        continue;
-                                    }
-                                }
-                                _ => {
-                                    if let Some(value) = self.data.find(k) {
-                                        match (value.to_string(), v.as_value().to_string()) {
-                                            (Some(x), Some(y)) => {
-                                                matched = x == y;
-                                            }
-                                            (_, _) => {
-                                                matched = false;
-                                            }
-                                        }
-                                        if matched == false {
-                                            break;
-                                        }
-                                        continue;
-                                    }
+                                (_, _) => {
+                                    matched = false;
                                 }
                             }
-                            matched = false;
-                            break;
-                        }
-                        if matched {
-                            break;
+                            if matched == false {
+                                break;
+                            }
+                            continue;
+                        } else if let Some(value) = self.data.find("Event.System.EventID.#text") {
+                            match (value.to_string(), v.as_value().to_string()) {
+                                (Some(x), Some(y)) => {
+                                    matched = x == y;
+                                }
+                                (_, _) => {
+                                    matched = false;
+                                }
+                            }
+                            if matched == false {
+                                break;
+                            }
+                            continue;
                         }
                     }
-                    if matched {
-                        for rule in rules {
-                            if mapping.exclusions.contains(&rule.tag) {
-                                continue;
+                    "Event.System.Provider" => {
+                        if let Some(value) = self.data.find("Event.System.Provider_attributes.Name")
+                        {
+                            match (value.to_string(), v.as_value().to_string()) {
+                                (Some(x), Some(y)) => {
+                                    matched = x == y;
+                                }
+                                (_, _) => {
+                                    matched = false;
+                                }
                             }
-                            if rule.tau.matches(&Wrapper(&group.fields, &self.data)) {
-                                hits.push(Hit {
-                                    tag: rule.tag.clone(),
-                                    group: Some(group.name.clone()),
-                                });
+                            if matched == false {
+                                break;
                             }
+                            continue;
+                        }
+                    }
+                    _ => {
+                        if let Some(value) = self.data.find(k) {
+                            match (value.to_string(), v.as_value().to_string()) {
+                                (Some(x), Some(y)) => {
+                                    matched = x == y;
+                                }
+                                (_, _) => {
+                                    matched = false;
+                                }
+                            }
+                            if matched == false {
+                                break;
+                            }
+                            continue;
                         }
                     }
                 }
-                Some(hits)
+                matched = false;
+                break;
             }
-            None => {
-                let mut hits = vec![];
-                for rule in rules {
-                    if rule.tau.matches(&self.data) {
-                        hits.push(Hit {
-                            tag: rule.tag.clone(),
-                            group: None,
-                        });
-                    }
-                }
-                Some(hits)
+            if matched {
+                break;
             }
         }
+        if matched {
+            let mut tags = vec![];
+            for rule in rules {
+                if exclusions.contains(&rule.tag) {
+                    continue;
+                }
+                if rule.tau.matches(&Mapper(&group.fields, &self.data)) {
+                    tags.push(rule.tag.clone());
+                }
+            }
+            return Some(tags);
+        }
+        None
     }
 }
 

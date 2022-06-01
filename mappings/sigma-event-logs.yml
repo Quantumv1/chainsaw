@@ -12,6 +12,7 @@ ignore:
 
 groups:
   - name: Suspicious Process Creation
+    timestamp: Event.System.TimeCreated
     filters:
       - Event.System.Provider: Microsoft-Windows-Sysmon
         Event.System.EventID: 1
@@ -30,6 +31,7 @@ groups:
       - CommandLine
 
   - name: Suspicious Network Connection
+    timestamp: Event.System.TimeCreated
     filters:
       - Event.System.Provider: Microsoft-Windows-Sysmon
         Event.System.EventID: 3
@@ -52,6 +54,7 @@ groups:
       - DestinationPort
 
   - name: Suspicious Image Load
+    timestamp: Event.System.TimeCreated
     filters:
       - Event.System.Provider: Microsoft-Windows-Sysmon
         Event.System.EventID: 7
@@ -67,6 +70,7 @@ groups:
       - ImageLoaded
 
   - name: Suspicious File Creation
+    timestamp: Event.System.TimeCreated
     filters:
       - Event.System.Provider: Microsoft-Windows-Sysmon
         Event.System.EventID: 11
@@ -82,6 +86,7 @@ groups:
       - Image
 
   - name: Suspicious Registry Event
+    timestamp: Event.System.TimeCreated
     filters:
       - Event.System.Provider: Microsoft-Windows-Sysmon
         Event.System.EventID: 13
@@ -98,6 +103,7 @@ groups:
       - TargetObject
 
   - name: Suspicious Service Installed
+    timestamp: Event.System.TimeCreated
     filters:
       - Event.System.Provider: Service Control Manager
         Event.System.EventID: 7045
@@ -113,6 +119,7 @@ groups:
       - ServiceName
 
   - name: Suspicious Command Line
+    timestamp: Event.System.TimeCreated
     filters:
       - Event.System.Provider: Microsoft-Windows-Security-Auditing
         Event.System.EventID: 4688
@@ -129,6 +136,7 @@ groups:
       - Image
 
   - name: Suspicious Powershell ScriptBlock
+    timestamp: Event.System.TimeCreated
     filters:
       - Event.System.Provider: Microsoft-Windows-PowerShell
         Event.System.EventID: 4104
@@ -142,6 +150,7 @@ groups:
       - ScriptBlockText
 
   - name: Suspicious Scheduled Task Created
+    timestamp: Event.System.TimeCreated
     filters:
       - Event.System.Provider: Microsoft-Windows-Security-Auditing
         Event.System.EventID: 4698
